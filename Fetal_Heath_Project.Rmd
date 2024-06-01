@@ -1,0 +1,67 @@
+---
+title: "Fetal Monitoring Can Predict Health Outcomes"
+author: "David Vance"
+date: "`r Sys.Date()`"
+output: pdf_document
+subtitle: HarvardX PH125.9x Capstone
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background and Introduction
+
+Monitoring the fetus during pregnancy and labor is of great importance, because it directly impacts health outcomes for both the mother and the baby. Among other things, it is useful for assessing the proper development of the fetus, the early detection of any distress, and for helping to guide decisions about labor and delivery. There are several key measurements that are routinely taken throughout the process.
+
+### Baseline Fetal Heartrate
+This is normally within a range of 110-160 beats per minute. A proper range indicates good fetal oxygen levels and self regulation ability **(REF)**. Deviations from the baseline can signal hypoxia or perhaps caridac abnormalities.
+  
+### Accelerations
+This refers to increases in fetal heart rates, which are associated with fetal movement and uterine contractions, among other things. These are positive signs, and may correlate with a lower risk of fetal acidosis.
+  
+### Decelerations
+This refers to decreases in fetal heart rates, which can be benign, but are concerning with increasing length and frequency. They may be caused by umbilical cord compression, but are also quite normal during contractions.
+  
+### Variability
+This refers to the variability in the fetal heart rate, with reduced variability potentially being indicative of a problem.
+  
+### Histogram Characterisitcs
+Fetal heart rate can also be characterized in even greater detail, by looking at statistics such as the mean, median, max and min, amongst other things, all of which may be useful measures of fetal well-being.
+  
+Large amounts of these types of data, paired with known fetal health outcomes, are a fruitful target for machine learnign techniques to help predict the health of future fetuses, and in turn, lead to early interventions to improve the health outcome of the fetus and the mother.
+
+In this report, we will be looking at such a dataset, which contains 2,113 observations of 21 variables each, and seeing if we can build any models that can successfully predict the paired outcome variable, fetal health.
+
+
+# Data Exploration and Analysis
+
+Before we try out any models, lets get a handle on what kind of data we have in the dataset. The first data point is the baseline value of the heart rate. As mentioned earlier, the expected range for this value should be between 110-160. Is this borne out by the data set?
+
+```{r echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(baseline.value)) + geom_histogram(bins=30)
+```
+
+
+# Results
+
+```{r echo=FALSE, warning=FALSE}
+
+```
+
+
+# Conclusions
+
+
+
+
+## References
+
+The data set for this project was downloaded from:
+https://www.kaggle.com/datasets/yaminh/fetal-health-monitoring-dataset
+
+
+Potential Refs
+https://pubmed.ncbi.nlm.nih.gov/33726745/
+
+
