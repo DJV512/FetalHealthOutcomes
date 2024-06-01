@@ -8,6 +8,16 @@ subtitle: HarvardX PH125.9x Capstone
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+
+dl <- "fetal_data.csv"
+
+if(!file.exists(dl))
+  download.file("https://github.com/DJV512/FetalHealthOutcomes/blob/main/f_health.csv", dl)
+
+fetal_data <- read.csv("f_health.csv")
+
 ```
 
 # Background and Introduction
@@ -39,7 +49,21 @@ In this report, we will be looking at such a dataset, which contains 2,113 obser
 Before we try out any models, lets get a handle on what kind of data we have in the dataset. The first data point is the baseline value of the heart rate. As mentioned earlier, the expected range for this value should be between 110-160. Is this borne out by the data set?
 
 ```{r echo=FALSE, warning=FALSE}
-fetal_data %>% ggplot(aes(baseline.value)) + geom_histogram(bins=30)
+fetal_data %>% ggplot(aes(baseline.value)) + geom_histogram(color="black", fill="blue", bins=15) + xlab("Baseline Heart Rate") + ylab("Count/Bin")
+
+FHR_mean <- mean(fetal_data$baseline.value)
+FHR_min <- min(fetal_data$baseline.value)
+FHR_max <- max(fetal_data$baseline.value)
+```
+
+As can be seen, the baseline heart rates do fall in this range, with a minimum of **`r FHR_min`**, a maximum of **`r FHR_max`**, and an average value of **`r round(FHR_mean, 2)`**.
+
+Unlike baseline heart rate, several of the other important variables in this data set have very small values, and do not have a large range of values. Let's take a look at the mean, mininum, maximum and standard deviation of these variables.
+
+```{r echo=FALSE, warning=FALSE}
+data_table <- tibble(Variable = c("Accelerations", "Movement", "Uterine Contractions", "Light Decelerations", "Severe Decelerations", "Prolonged Decelerations"), Mean = c(mean(fetal_data$accelerations), mean(fetal_data$fetal_movement), mean(fetal_data$uterine_contractions), mean(fetal_data$light_decelerations), mean(fetal_data$severe_decelerations), mean(fetal_data$prolongued_decelerations)), Min = c(min(fetal_data$accelerations), min(fetal_data$fetal_movement), min(fetal_data$uterine_contractions), min(fetal_data$light_decelerations), min(fetal_data$severe_decelerations), min(fetal_data$prolongued_decelerations)), Max = c(max(fetal_data$accelerations), max(fetal_data$fetal_movement), max(fetal_data$uterine_contractions), max(fetal_data$light_decelerations), max(fetal_data$severe_decelerations), max(fetal_data$prolongued_decelerations)), StDev = c(sd(fetal_data$accelerations), sd(fetal_data$fetal_movement), sd(fetal_data$uterine_contractions), sd(fetal_data$light_decelerations), sd(fetal_data$severe_decelerations), sd(fetal_data$prolongued_decelerations))) %>% knitr::kable()
+
+data_table
 ```
 
 
