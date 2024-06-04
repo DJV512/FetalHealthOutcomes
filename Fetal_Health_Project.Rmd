@@ -1,0 +1,442 @@
+---
+title: "Fetal Monitoring Can Predict Health Outcomes"
+author: "David Vance"
+date: "`r Sys.Date()`"
+output: pdf_document
+subtitle: HarvardX PH125.9x Capstone
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(pls)
+
+set.seed(1, sample.kind="Rounding")
+
+fetal_data <- read.csv("https://drive.google.com/uc?export=download&id=1170_4ug-fvVUaw9_zxZmFZa9P5mqZRCb")
+
+```
+
+# Background and Introduction
+
+Monitoring the fetus during pregnancy and labor is of great importance, because it directly impacts health outcomes for both the mother and the baby (Urdal, 2021). Among other things, it is useful for assessing the proper development of the fetus, the early detection of any distress, and for helping to guide decisions about labor and delivery. There are several key measurements that are routinely taken throughout the process.
+
+**Baseline Fetal Heart Rate:** This is normally within a range of 110-160 beats per minute. A proper range indicates good fetal oxygen levels and self regulation ability (Pildner von Steinburg, 2013). Deviations from the baseline can signal hypoxia or perhaps caridac abnormalities.
+  
+**Accelerations:** This refers to increases in fetal heart rates, which are associated with fetal movement and uterine contractions, among other things. These are positive signs, and may correlate with a lower risk of fetal acidosis (López-Justo, 2021).
+  
+**Decelerations:** This refers to decreases in fetal heart rates, which can be benign, but are concerning with increasing length and frequency. They may be caused by umbilical cord compression, but are also quite normal during contractions (López-Justo, 2021).
+  
+**Variability:** This refers to the variability in the fetal heart rate, with reduced variability potentially being indicative of a problem (Tarvonen, 2022).
+  
+**Histogram Characteristics:** Fetal heart rate can also be characterized in even greater detail, by looking at statistics such as the mean, median, max and min, amongst other things, all of which may be useful measures of fetal well-being (Griffin, 2005).
+  
+Large amounts of these types of data, paired with known fetal health outcomes, are a fruitful target for machine learning techniques to help predict the health of future fetuses, and in turn, lead to early interventions to improve the health outcome of the fetus and the mother.
+
+In this report, we will be looking at such a dataset, which contains 2,113 observations of 21 variables each, and seeing if we can build any models that can successfully predict the paired outcome variable, fetal health.
+
+
+# Data Exploration and Analysis
+
+Before we try out any models, lets get a handle on what kind of data we have in the dataset. Let's take a look at the top few entries of the dataset.
+
+```{r head, echo=FALSE, warning=FALSE}
+head(fetal_data)
+```
+
+As can be seen, the data itself is quite unwieldy. Let's look at the individual observations in more detail.
+
+The first data point is the baseline value of the heart rate. As mentioned earlier, the expected range for this value should be between 110-160. Is this borne out by the data set?
+
+```{r baseline_data, echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(baseline.value)) + geom_histogram(color="black", fill="blue", bins=15) + xlab("Baseline Heart Rate") + ylab("Count/Bin")
+
+FHR_mean <- mean(fetal_data$baseline.value)
+FHR_min <- min(fetal_data$baseline.value)
+FHR_max <- max(fetal_data$baseline.value)
+```
+
+As can be seen, the baseline heart rates do fall in this range, with a minimum of **`r FHR_min`**, a maximum of **`r FHR_max`**, and an average value of **`r round(FHR_mean, 2)`**.
+
+Unlike baseline heart rate, several of the other important variables in this data set have very small values, and do not have a large range of values. Let's take a look at the minimum, maximum, mean, and standard deviation of these variables.
+
+```{r celeration_data, echo=FALSE, warning=FALSE}
+data_table <- tibble(Variable = c("Accelerations", "Movement", "Uterine Contractions", "Light Decelerations", "Severe Decelerations", "Prolonged Decelerations"), Min = c(min(fetal_data$accelerations), min(fetal_data$fetal_movement), min(fetal_data$uterine_contractions), min(fetal_data$light_decelerations), min(fetal_data$severe_decelerations), min(fetal_data$prolongued_decelerations)), Max = c(max(fetal_data$accelerations), max(fetal_data$fetal_movement), max(fetal_data$uterine_contractions), max(fetal_data$light_decelerations), max(fetal_data$severe_decelerations), max(fetal_data$prolongued_decelerations)), Mean = c(mean(fetal_data$accelerations), mean(fetal_data$fetal_movement), mean(fetal_data$uterine_contractions), mean(fetal_data$light_decelerations), mean(fetal_data$severe_decelerations), mean(fetal_data$prolongued_decelerations)), StDev = c(sd(fetal_data$accelerations), sd(fetal_data$fetal_movement), sd(fetal_data$uterine_contractions), sd(fetal_data$light_decelerations), sd(fetal_data$severe_decelerations), sd(fetal_data$prolongued_decelerations))) %>% knitr::kable()
+
+data_table
+```
+
+Given these small and not too different values amongst the individual variables, it would be difficult for any of them to be predictive on their own. As we progress, we will see whether we can come up with a machine learning model that can make anything of them.
+
+We next come to a group of variables that relate to the variability of the heart rate, and here we do see some big differences in the data. Let's look at the distribution of a few of them. Note: somewhat unintuitively, the term "abnormal" in these data does not necessarily mean that there's anything wrong with the heart rate, but rather that it differs from the baseline, or normal, heart rate. Indeed, these variations are quite normal, and in fact are a positive sign of fetal viability.
+
+```{r variability_plots, echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(abnormal_short_term_variability)) + geom_histogram(color="black", fill="blue", bins=30) + xlab("Abnormal Short Term Variability (% of Time)") + ylab("Count/Bin")
+
+fetal_data %>% ggplot(aes(mean_value_of_short_term_variability)) + geom_histogram(color="black", fill="blue", bins=30) + xlab("Mean Value of Short Term Variability (Beats/Min)") + ylab("Count/Bin")
+```
+
+As can be seen, it is not unusual for there to be abnormal short term variability in the fetal heart rate, with up to 80% of the time spent in these short term abnormal periods. Most of this abnormal time is spent within 3 beats/minute of the baseline rate. The data also looks somewhat bimodal, which may prove to have some predictive value.
+
+```{r variability_plots_2, echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(percentage_of_time_with_abnormal_long_term_variability)) + geom_histogram(color="black", fill="blue", bins=30) + xlab("Abnormal Long Term Variability (% of Time)") + ylab("Count/Bin")
+
+fetal_data %>% ggplot(aes(mean_value_of_long_term_variability)) + geom_histogram(color="black", fill="blue", bins=30) + xlab("Mean Value of Long Term Variability (Beats/Min)") + ylab("Count/Bin")
+```
+
+On the other hand, long term variability is much more rare, with a large number of fetuses experiencing it for very short periods, if at all. However, those that do experience it tend to have a much higher mean value of variability, around 8 beats/minute. As noted, variability is normal and positive, though perhaps not for long terms. We shall see if the model finds anything along those lines.
+
+Lastly, there are 10 different descriptors of the histogram signal of fetal heart rate. Some of these are quite variable, while some are not. Let's look at a summary of these statistics.
+
+```{r histogram_data_table, echo=FALSE, warning=FALSE}
+data_table <- tibble(Variable = c("Width", "Min", "Max", "Number of Peaks", "Number of Zeros", "Mode", "Mean", "Median", "Variance", "Tendency"), Min = c(min(fetal_data$histogram_width), min(fetal_data$histogram_min), min(fetal_data$histogram_max), min(fetal_data$histogram_number_of_peaks), min(fetal_data$histogram_number_of_zeroes), min(fetal_data$histogram_mode), min(fetal_data$histogram_mean), min(fetal_data$histogram_median), min(fetal_data$histogram_variance), min(fetal_data$histogram_tendency)), Max = c(max(fetal_data$histogram_width), max(fetal_data$histogram_min), max(fetal_data$histogram_max), max(fetal_data$histogram_number_of_peaks), max(fetal_data$histogram_number_of_zeroes), max(fetal_data$histogram_mode), max(fetal_data$histogram_mean), max(fetal_data$histogram_median), max(fetal_data$histogram_variance), max(fetal_data$histogram_tendency)), Mean = c(mean(fetal_data$histogram_width), mean(fetal_data$histogram_min), mean(fetal_data$histogram_max), mean(fetal_data$histogram_number_of_peaks), mean(fetal_data$histogram_number_of_zeroes), mean(fetal_data$histogram_mode), mean(fetal_data$histogram_mean), mean(fetal_data$histogram_median), mean(fetal_data$histogram_variance), mean(fetal_data$histogram_tendency)), StDev = c(sd(fetal_data$histogram_width), sd(fetal_data$histogram_min), sd(fetal_data$histogram_max), sd(fetal_data$histogram_number_of_peaks), sd(fetal_data$histogram_number_of_zeroes), sd(fetal_data$histogram_mode), sd(fetal_data$histogram_mean), sd(fetal_data$histogram_median), sd(fetal_data$histogram_variance), sd(fetal_data$histogram_tendency))) %>% knitr::kable()
+
+data_table
+```
+
+It is not necessary to look beyond the first row of this table to see some real variability in these numbers. Histogram width shows a minimum of just 3 and a maximum of 180, a huge range with a large standard deviation. Let's just take a look at that data quickly to see what that looks like.
+
+```{r histogram_width_plot, echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(histogram_width)) + geom_histogram(color="black", fill="blue", bins=30) + xlab("Histogram Width (Beats/Min)") + ylab("Count/Bin")
+```
+
+Not unexpectedly, given the statistics listed above, the data shows that it is not uncommon to have a histogram width anywhere between 10 and 150, although this data also shows a bit of bimodality.
+
+Last, but not least, the final column represents the known health outcomes for these fetuses. Let's have a look at how they are distributed.
+
+```{r health_outcome_plot, echo=FALSE, warning=FALSE}
+fetal_data %>% ggplot(aes(fetal_health)) + geom_histogram(color="black", fill="blue", bins=3) + xlab("Health Outcome") + ylab("Count/Bin")
+```
+
+In this data set, a fetal health outcome of 1 means that the fetus was "normal" when born. A health outcome of 2 represents "suspect," in that there is a suspected, but not yet confirmed, pathology. A health outcome of 3 represents a fetus with a confirmed pathology. As can be seen, thankfully the most likely outcome for fetuses is normal (1), but there is still an uncomfortably high percentage of suspect (2) and pathological (3) outcomes (13.8% and 8.3%, respectively). Being able to identify these suspected or confirmed pathological fetuses early may lead to life saving early intervention. Thus, we will now attempt to use this data set to predict fetal outcome based on all, or some portion of, the provided variables.
+
+# Results
+
+The first thing we must do is to split up our data set into testing and training sets. However, since we will want to test several different models, we will further split up our training set into a train_train and train_test sets. These two sets will be used to train and test the various models, with the original test_data set being reserved to test only the accuracy of the final model, once decided on.
+
+```{r factorizing, echo=FALSE, warning=FALSE}
+fetal_data$fetal_health <- factor(fetal_data$fetal_health, levels = c(1,2,3))
+```
+
+```{r test_train_split}
+train_index <- createDataPartition(fetal_data$fetal_health, times=1, p=0.1, list=FALSE)
+train_data <- fetal_data[-train_index, ]
+test_data <- fetal_data[train_index, ]
+
+train2_index <- createDataPartition(train_data$fetal_health, times=1, p=0.1, list=FALSE)
+train_train_data <- train_data[-train2_index, ]
+train_test_data <- train_data[train2_index, ]
+```
+
+The full dataset consists of 2113 observations. We have now reserved 10% of the data (test_data, 213 observations) to test with the final model. Of the remaining 90% (1900 observations), a further 10% was split off to use as a testing set (train_test_data, 192 observations) for our actual model training data (train_train_data, 1708 observations). We will train three different classification models (K Nearest Neighbors, Regression Tree, Random Forest) with our train_train data set, and make predictions using those models on the train_test data set.
+
+#### K Nearest Neighbors
+
+As a first model, we will attempt to predict fetal health outcome using all other variables in the data set. First, we will try a number of different values of k to see what the best value is for our model.
+
+```{r knn_tuning}
+knn_model <- train(fetal_health ~ ., data=train_train_data, method="knn", 
+                   trControl = trainControl(method = "cv"), 
+                   tuneGrid = data.frame(k=seq(1,20)))
+```
+
+Let's look at a graph of the Accuracy for each potential value of k and see what the best value of the number of nearest neighbors is to use.
+
+```{r knn_plot}
+plot(knn_model)
+```
+
+From the graph, it is evident that **`r knn_model$bestTune`** is the best value to use for the number of nearest neighbors. Now, let's use that value of k to train the model, use the model to make predictions in our train_test_data set, and then look at a confusion matrix of how well it has performed.
+
+```{r knn_predictions}
+best_model_knn <- knn3(fetal_health ~ ., data=train_train_data, 
+                   k = knn_model$bestTune)
+predictions_knn <- predict(best_model_knn, train_test_data, type="class")
+cm_knn <- confusionMatrix(predictions_knn, train_test_data$fetal_health)
+cm_knn
+```
+
+Our first model has an accuracy of **`r round(100*cm_knn$overall["Accuracy"],2)`%**. That's not too bad for a first model. The good news is that of the 16 fetuses most at risk (those with a known outcome of 3), the model correctly puts all but 3 of them into at least the "suspicious" category (2), which would at least produce more scrutiny on these fetuses.
+
+But can we do better? We saw during data exploration above that there are four basic kinds of data, including baseline heart rate, accelerations/decelerations, variability, and histogram measurements. Let's try training models that use only 1 of these types of variables each. Once we have that data, we can perhaps combine the best ones to get an even better prediction. We will follow the same code as before, but this time during training, instead of using "fetal_health ~ ." to train against all data, we will replace the "." with the relevant data, for instance "baseline.value." Doing so yields the following results.
+
+```{r knn_individual_models, echo=FALSE, warning=FALSE}
+knn_model_baseline <- train(fetal_health ~ baseline.value, data=train_train_data, method="knn", 
+                   trControl = trainControl(method = "cv"), 
+                   tuneGrid = data.frame(k=seq(1,20)))
+best_model_baseline <- knn3(fetal_health ~ baseline.value, data=train_train_data, 
+                   k = knn_model_baseline$bestTune)
+predictions_baseline <- predict(best_model_baseline, train_test_data, type="class")
+cm_baseline <- confusionMatrix(predictions_baseline, train_test_data$fetal_health)
+
+
+knn_model_celeration <- train(fetal_health ~ accelerations + fetal_movement + uterine_contractions + light_decelerations + severe_decelerations + prolongued_decelerations, data=train_train_data, method="knn", 
+                   trControl = trainControl(method = "cv"), 
+                   tuneGrid = data.frame(k=seq(1,20)))
+best_model_celeration <- knn3(fetal_health ~ accelerations + fetal_movement + uterine_contractions + light_decelerations + severe_decelerations + prolongued_decelerations, data=train_train_data, 
+                   k = knn_model_celeration$bestTune)
+predictions_celeration <- predict(best_model_celeration, train_test_data, type="class")
+cm_celeration <- confusionMatrix(predictions_celeration, train_test_data$fetal_health)
+
+
+knn_model_variability <- train(fetal_health ~ abnormal_short_term_variability + mean_value_of_short_term_variability + percentage_of_time_with_abnormal_long_term_variability + mean_value_of_long_term_variability, data=train_train_data, method="knn", 
+                   trControl = trainControl(method = "cv"), 
+                   tuneGrid = data.frame(k=seq(1,20)))
+best_model_variability <- knn3(fetal_health ~ abnormal_short_term_variability + mean_value_of_short_term_variability + percentage_of_time_with_abnormal_long_term_variability + mean_value_of_long_term_variability, data=train_train_data, 
+                   k = knn_model_variability$bestTune)
+predictions_variability <- predict(best_model_variability, train_test_data, type="class")
+cm_variability <- confusionMatrix(predictions_variability, train_test_data$fetal_health)
+
+
+knn_model_histogram <- train(fetal_health ~ histogram_width + histogram_min + histogram_max + histogram_number_of_peaks + histogram_number_of_zeroes + histogram_mode + histogram_mean + histogram_median + histogram_variance + histogram_tendency, data=train_train_data, method="knn", 
+                   trControl = trainControl(method = "cv"), 
+                   tuneGrid = data.frame(k=seq(1,20)))
+best_model_histogram <- knn3(fetal_health ~ histogram_width + histogram_min + histogram_max + histogram_number_of_peaks + histogram_number_of_zeroes + histogram_mode + histogram_mean + histogram_median + histogram_variance + histogram_tendency, data=train_train_data, 
+                   k = knn_model_histogram$bestTune)
+predictions_histogram <- predict(best_model_histogram, train_test_data, type="class")
+cm_histogram <- confusionMatrix(predictions_histogram, train_test_data$fetal_health)
+
+knn_results_table <- tibble(Variables_Used = c("Baseline Heart Rate", "Accel/Decel", "Variability", "Histogram"), Best_k = c(knn_model_baseline$bestTune, knn_model_celeration$bestTune, knn_model_variability$bestTune, knn_model_histogram$bestTune), Accuracy = c(round(100*cm_baseline$overall["Accuracy"],2), round(100*cm_celeration$overall["Accuracy"],2), round(100*cm_variability$overall["Accuracy"],2), round(100*cm_histogram$overall["Accuracy"],2))) %>% knitr::kable()
+
+knn_results_table
+
+```
+
+Right off the bat, we can see that no one set of data is as predictive as the combination of all of them, showing off how more data is usually a good thing. Unsurprisingly, using only the baseline heart rate is not that predictive, since there is such a wide range of acceptable values. Accelerations and decelerations also seem to be less important, which may not be that surprising given the low standard deviations of these values we saw earlier. Conversely, using variability or histogram data alone comes closest to the original accuracy, showing how important they are. Let's try combining the two most accurate metrics, variability and histogram, leaving out the less important metrics, and seeing what our accuracy looks like.
+
+```{r knn_model_variability_histogram}
+knn_model_v_h <- train(fetal_health ~ abnormal_short_term_variability + 
+                         mean_value_of_short_term_variability + 
+                         percentage_of_time_with_abnormal_long_term_variability + 
+                         mean_value_of_long_term_variability + histogram_width + 
+                         histogram_min + histogram_max + 
+                         histogram_number_of_peaks + histogram_number_of_zeroes + 
+                         histogram_mode + histogram_mean + histogram_median + 
+                         histogram_variance + histogram_tendency, 
+                         data=train_train_data, method="knn", 
+                         trControl = trainControl(method = "cv"), 
+                         tuneGrid = data.frame(k=seq(1,20)))
+best_model_v_h <- knn3(fetal_health ~ abnormal_short_term_variability + 
+                         mean_value_of_short_term_variability + 
+                         percentage_of_time_with_abnormal_long_term_variability + 
+                         mean_value_of_long_term_variability + histogram_width + 
+                         histogram_min + histogram_max + 
+                         histogram_number_of_peaks + histogram_number_of_zeroes + 
+                         histogram_mode + histogram_mean + histogram_median + 
+                         histogram_variance + histogram_tendency, 
+                         data=train_train_data, 
+                         k = knn_model_v_h$bestTune)
+predictions_v_h <- predict(best_model_v_h, train_test_data, type="class")
+cm_v_h <- confusionMatrix(predictions_v_h, train_test_data$fetal_health)
+
+cm_v_h
+```
+
+We get the same accuracy as the original model using all of the data, proving the importance of variability and the histogram data. Interestingly, although the accuracy is the same, the predictions are not quite the same, with two fetuses (one each in the health outcome 1 and 2 columns) being changed in their predicted outcome. However, predictions for fetuses in health outcome 3 did not change. For now, since the accuracy is equivalent, we'll stick with using the model with all of the data. Let's start a table of the various models we've tried.
+
+```{r results_table_1, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+#### Regression Tree
+
+Next, let's try a regression tree model. First, we'll tune the complexity parameter using cross validation to see what the proper value is, and plot the resulting graph.
+
+```{r regression_tree_tuning_and_plot}
+rpart <- train(fetal_health ~ ., method = "rpart", 
+               trControl = trainControl(method = "cv"), 
+               tuneGrid = data.frame(cp = seq(0.0, 0.03, len = 15)), 
+               data = train_train_data)
+
+plot(rpart)
+```
+
+As can be seen in the graph, the best value of the complexity parameter is **`r round(rpart$bestTune,3)`**. Now, let's use that parameter to predict the fetal health outcomes in our train_test data set, using all data in the dataset.
+
+```{r regression_tree_predictions}
+rpart_predict <- predict(rpart, train_test_data)
+cm_rpart <- confusionMatrix(rpart_predict, train_test_data$fetal_health)
+cm_rpart
+```
+
+With an accuracy of **`r round(100*cm_rpart$overall["Accuracy"],2)`%**, this model is just as good as the KNN model. It does do slightly better at classifying the most at-risk fetuses, moving 1 fetus from a predicted outcome of 2 to a predicted outcome of 3. Let's add this value to our results table.
+
+```{r results_table_2, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+Although it is somewhat unwieldy, due to the regrettably lengthy variable names, let's take a look at the decision tree and see what the model thinks are the most important variables, and their important cutoff points.
+
+```{r tree_diagram, echo=FALSE, warning=FALSE}
+plot(rpart$finalModel, margin=0.1)
+text(rpart$finalModel, cex=0.25)
+```
+
+Interestingly, the regression tree thinks that the mean value of short term variability is the most important predictor. In fact, the model immediately places a fetus in fetal outcome 3 if they have a mean value of short term variability of <0.55, and a percentage of time in abnormal long term variability > 68.5% of the time, showing both the importance of having high mean short term variability, and a lower amount of time spent in long term variability. There are also several decision points relating to histogram values of mean and mode. This matches quite well with the results of the knn model, which showed that, when tested in isolation, variability and the histogram were the two most predictive types of data.
+
+Also of note, the regression tree uses only 8 of the 21 variables in the dataset to make predictions. Let's try training a regression tree model using only those 8 parameters, to see if that improves the accuracy.
+
+```{r regression_tree_tuning_and_predictions_8}
+rpart8 <- train(fetal_health ~ mean_value_of_short_term_variability + 
+                  percentage_of_time_with_abnormal_long_term_variability + 
+                  abnormal_short_term_variability + histogram_mean + 
+                  histogram_mode + baseline.value + uterine_contractions + 
+                  accelerations, method = "rpart", 
+                  trControl = trainControl(method = "cv"), 
+                  tuneGrid = data.frame(cp = seq(0.0, 0.03, len = 15)), 
+                  data = train_train_data)
+rpart_predict8 <- predict(rpart8, train_test_data)
+cm_rpart8 <- confusionMatrix(rpart_predict8, train_test_data$fetal_health)
+cm_rpart8
+```
+
+Using only the 8 most important parameters does improve the prediction accuracy to a small extent, up tp **`r round(100*cm_rpart8$overall["Accuracy"],2)`%**, proving their predictive ability. The improved accuracy affects mostly fetuses in health outcome 2, correctly moving two fetuses from a prediction of 1 to a prediction of 2. Let's add it to our results table.
+
+```{r results_table_3, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree", "Regression Tree - best 8 parameters"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2), round(100*cm_rpart8$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+
+#### K Nearest Neighbors Redux
+
+The eight variables that the regression tree uses are mean_value_of_short_term_variability, percentage_of_time_with_abnormal_long_term_variability, abnormal_short_term_variability, histogram_mean, histogram_mode, baseline.value, uterine_contractions and accelerations. Let's try training a knn model using only those parameters and see if it performs any better than the knn model using all the data.
+
+
+```{r knn_redux_train}
+knn_model_best_params <- train(fetal_health ~ mean_value_of_short_term_variability + 
+                            percentage_of_time_with_abnormal_long_term_variability + 
+                            abnormal_short_term_variability + histogram_mean + 
+                            histogram_mode + baseline.value + 
+                            uterine_contractions + accelerations, 
+                            data=train_train_data, method="knn", 
+                            trControl = trainControl(method = "cv"), 
+                            tuneGrid = data.frame(k=seq(1,20)))
+plot(knn_model_best_params)
+```
+
+```{r knn_redux_predict}
+best_model_best_params <- knn3(fetal_health ~ mean_value_of_short_term_variability +
+                            percentage_of_time_with_abnormal_long_term_variability + 
+                            abnormal_short_term_variability + histogram_mean + 
+                            histogram_mode + baseline.value + 
+                            uterine_contractions + accelerations, 
+                            data=train_train_data, 
+                            k = knn_model_best_params$bestTune)
+predictions_best_params <- predict(best_model_best_params, 
+                            train_test_data, 
+                            type="class")
+cm_best_params <- confusionMatrix(predictions_best_params, 
+                            train_test_data$fetal_health)
+cm_best_params
+```
+
+Disappointingly, that doesn't seem to have worked quite as well as hoped, with a marked reduction in accuracy (**`r round(100*cm_best_params$overall["Accuracy"],2)`%**) compared to all other models tested. But it was worth a try! We'll add it to the results table.
+
+```{r results_table_4, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree", "Regression Tree - best 8 parameters", "K Nearest Neighbors - best 8 parameters"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2), round(100*cm_rpart8$overall["Accuracy"],2), round(100*cm_best_params$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+#### Random Forest
+
+Let's now try a random forest model, using cross validation to choose the best node size parameter.
+
+```{r random_forest_tuning}
+rf_model <- train(fetal_health ~ ., method="Rborist", 
+                  trControl = trainControl(method = "cv"), 
+                  tuneGrid = data.frame(predFixed = 2, 
+                                        minNode = c(1,3,5)), 
+                  data = train_train_data)
+plot(rf_model)
+```
+
+```{r random_forest_predictions}
+rf_predict <- predict(rf_model, train_test_data)
+cm_rf <- confusionMatrix(rf_predict, train_test_data$fetal_health)
+cm_rf
+```
+
+The random forest model results in a very slight gain of accuracy (**`r round(100*cm_rf$overall["Accuracy"],2)`%**) over the KNN and Regression Tree models using all of the data, although slightly worse than the regression tree model using only the 8 most important parameters. It also performs worse than all other models, even the relatively inaccurate KNN model using just the 8 parameters, at predicting fetuses in the most important health outcome category (3). That's certainly not ideal! We'll add it to our results table. 
+
+```{r results_table_5, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree", "Regression Tree - best 8 parameters", "K Nearest Neighbors - best 8 parameters", "Random Forest"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2), round(100*cm_rpart8$overall["Accuracy"],2), round(100*cm_best_params$overall["Accuracy"],2), round(100*cm_rf$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+For completeness, let's test the random forest model with just the eight most important parameters as well.
+
+```{r random_forest_8_tuning}
+rf8_model <- train(fetal_health ~ mean_value_of_short_term_variability + 
+                     percentage_of_time_with_abnormal_long_term_variability + 
+                     abnormal_short_term_variability + histogram_mean + 
+                     histogram_mode + baseline.value + uterine_contractions + 
+                     accelerations, method="Rborist", 
+                     trControl = trainControl(method = "cv"), 
+                     tuneGrid = data.frame(predFixed = 2, minNode = c(1,3,5)), 
+                     data = train_train_data)
+plot(rf8_model)
+```
+
+```{r random_forest_8_predictions}
+rf8_predict <- predict(rf8_model, train_test_data)
+cm_rf8 <- confusionMatrix(rf8_predict, train_test_data$fetal_health)
+cm_rf8
+```
+
+We have a winner! Random forest, using only the eight most important parameters, as discovered by the regression tree method, yields an accuracy of **`r round(100*cm_rf8$overall["Accuracy"],2)`%**, our best model yet. It also does a much better job than the random forest model using all of the data at predicting health outcomes for fetuses in outcome 3. We'll call this our final model, and add the result to our table.
+
+```{r results_table_6, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree", "Regression Tree - best 8 parameters", "K Nearest Neighbors - best 8 parameters", "Random Forest", "Random Forest - best 8 parameters"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2), round(100*cm_rpart8$overall["Accuracy"],2), round(100*cm_best_params$overall["Accuracy"],2), round(100*cm_rf$overall["Accuracy"],2), round(100*cm_rf8$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+#### Final Test
+
+Now that we've identified our best model, let's test it with the original testing data, which we have not touched to this point, and see how well it performs.
+
+```{r final_model}
+rf_final_predict <- predict(rf8_model, test_data)
+cm_rf_final <- confusionMatrix(rf_final_predict, test_data$fetal_health)
+cm_rf_final
+```
+
+Our final model was able to predict the health outcomeas of the test data set with the best accuracy yet - **`r round(100*cm_rf_final$overall["Accuracy"],2)`%**! The model correctly classifies 16/18 fetuses in health outcome 3 correctly, and places one of the other two in outcome 2, a very accurate prediction set for the most at risk fetuses. Let's finalize our results table.
+
+```{r results_table_7, echo=FALSE, warning=FALSE}
+model_results_table <- tibble(Model = c("K Nearest Neighbors", "Regression Tree", "Regression Tree - best 8 parameters", "K Nearest Neighbors - best 8 parameters", "Random Forest", "Random Forest - best 8 parameters", "", "Final Model on Holdout Test Data"), Accuracy = c(round(100*cm_knn$overall["Accuracy"],2), round(100*cm_rpart$overall["Accuracy"],2), round(100*cm_rpart8$overall["Accuracy"],2), round(100*cm_best_params$overall["Accuracy"],2), round(100*cm_rf$overall["Accuracy"],2), round(100*cm_rf8$overall["Accuracy"],2), "", round(100*cm_rf_final$overall["Accuracy"],2))) %>% knitr::kable()
+
+model_results_table
+```
+
+
+# Conclusions
+
+The health outcome of a fetus during pregnancy and labor/delivery are of paramount importance to parents, doctors, and hospitals. Utilizing a large set of data, we were able to design a model that could predict fetal health outcomes with very high accuracy. Such predictions will allow for health care professionals to take the steps necessary to ensure the best possible care, at the earliest possible time point, for fetuses that need it most.
+
+
+# References
+
+The data set for this project was originally downloaded from:
+https://www.kaggle.com/datasets/yaminh/fetal-health-monitoring-dataset
+
+
+Urdal J, Engan K, Eftestøl T, Haaland SH, Kamala B, Mdoe P, Kidanto H, Ersdal H. Fetal heart rate development during labour. Biomed Eng Online. 2021 Mar 16;20(1):26. doi: 10.1186/s12938-021-00861-z. PMID: 33726745; PMCID: PMC7962212.
+
+Pildner von Steinburg S, Boulesteix AL, Lederer C, Grunow S, Schiermeier S, Hatzmann W, Schneider KT, Daumer M. What is the "normal" fetal heart rate? PeerJ. 2013 Jun 4;1:e82. doi: 10.7717/peerj.82. PMID: 23761161; PMCID: PMC3678114.
+
+López-Justo C, Pliego-Carrillo AC, Ledesma-Ramírez CI, Mendieta-Zerón H, Peña-Castillo MÁ, Echeverría JC, Rodríguez-Arce J, Reyes-Lagos JJ. Differences in the Asymmetry of Beat-to-Beat Fetal Heart Rate Accelerations and Decelerations at Preterm and Term Active Labor. Sensors (Basel). 2021 Dec 10;21(24):8249. doi: 10.3390/s21248249. PMID: 34960343; PMCID: PMC8704786.
+
+Tarvonen MJ, Lear CA, Andersson S, Gunn AJ, Teramo KA. Increased variability of fetal heart rate during labour: a review of preclinical and clinical studies. BJOG. 2022 Nov;129(12):2070-2081. doi: 10.1111/1471-0528.17234. Epub 2022 Jun 5. PMID: 35596699; PMCID: PMC9796294.
+
+Griffin MP, Lake DE, Bissonette EA, Harrell FE Jr, O'Shea TM, Moorman JR. Heart rate characteristics: novel physiomarkers to predict neonatal infection and death. Pediatrics. 2005 Nov;116(5):1070-4. doi: 10.1542/peds.2004-2461. PMID: 16263991.
